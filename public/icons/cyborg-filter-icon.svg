@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">CYBORG Filter</title>
+  <desc id="desc">Logo app CYBORG Filter con monogramma CF, database e lente di ricerca.</desc>
+  <defs>
+    <radialGradient id="bgGlow" cx="50%" cy="38%" r="70%">
+      <stop offset="0%" stop-color="#10364d"/>
+      <stop offset="48%" stop-color="#071827"/>
+      <stop offset="100%" stop-color="#020617"/>
+    </radialGradient>
+    <linearGradient id="cyan" x1="78" y1="82" x2="432" y2="430" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#67e8f9"/>
+      <stop offset="48%" stop-color="#22d3ee"/>
+      <stop offset="100%" stop-color="#14b8a6"/>
+    </linearGradient>
+    <linearGradient id="whiteCyan" x1="138" y1="180" x2="340" y2="342" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="58%" stop-color="#ecfeff"/>
+      <stop offset="100%" stop-color="#67e8f9"/>
+    </linearGradient>
+    <filter id="softGlow" x="-25%" y="-25%" width="150%" height="150%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feColorMatrix in="blur" type="matrix" values="0 0 0 0 0.13 0 0 0 0 0.83 0 0 0 0 0.93 0 0 0 0.75 0"/>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <clipPath id="rounded">
+      <rect x="28" y="28" width="456" height="456" rx="96"/>
+    </clipPath>
+  </defs>
+
+  <rect width="512" height="512" rx="104" fill="url(#bgGlow)"/>
+  <g clip-path="url(#rounded)">
+    <path d="M70 154c0-44 36-80 80-80h212c44 0 80 36 80 80v204c0 44-36 80-80 80H150c-44 0-80-36-80-80V154Z" fill="#06111f" opacity=".7"/>
+    <path d="M82 156c0-39.8 32.2-72 72-72h204c39.8 0 72 32.2 72 72v200c0 39.8-32.2 72-72 72H154c-39.8 0-72-32.2-72-72V156Z" fill="none" stroke="url(#cyan)" stroke-width="10" filter="url(#softGlow)"/>
+
+    <g opacity=".95">
+      <ellipse cx="256" cy="166" rx="116" ry="42" fill="#071827" stroke="url(#cyan)" stroke-width="9"/>
+      <path d="M140 166v160c0 23 52 42 116 42s116-19 116-42V166" fill="#06111f" stroke="url(#cyan)" stroke-width="9" stroke-linejoin="round"/>
+      <path d="M140 246c0 23 52 42 116 42s116-19 116-42" fill="none" stroke="#0891b2" stroke-width="7" opacity=".75"/>
+      <path d="M140 326c0 23 52 42 116 42s116-19 116-42" fill="none" stroke="#0891b2" stroke-width="7" opacity=".75"/>
+    </g>
+
+    <path d="M176 190h74c33 0 58 13 75 35l-40 33c-9-12-21-18-37-18h-57c-18 0-31 13-31 32s13 32 31 32h72l-22 50h-65c-49 0-86-35-86-82s37-82 86-82Z" fill="url(#whiteCyan)"/>
+    <path d="M310 190h116l-22 50h-68l-12 28h68l-20 47h-68l-22 51h-63l76-176h15Z" fill="url(#cyan)" filter="url(#softGlow)"/>
+
+    <g transform="translate(314 312)" filter="url(#softGlow)">
+      <circle cx="50" cy="50" r="43" fill="#06111f" stroke="url(#cyan)" stroke-width="10"/>
+      <path d="M83 83l42 42" stroke="url(#cyan)" stroke-width="16" stroke-linecap="round"/>
+      <path d="M32 40h38M32 55h38M32 70h28" stroke="#67e8f9" stroke-width="9" stroke-linecap="round"/>
+    </g>
+  </g>
+</svg>
