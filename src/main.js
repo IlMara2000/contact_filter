@@ -1,12 +1,15 @@
 import "./styles.css";
 
 const DATA_URL = "/data/contact_excel_index.json";
+const SAVED_RECORDS_KEY = "cyborg-filter-saved-records-v1";
 const state = {
   loaded: false,
   payload: null,
   baseRecords: [],
+  savedRecords: [],
   importedRecords: [],
   importedFiles: [],
+  lastSavedCount: 0,
   people: [],
   results: []
 };
@@ -117,22 +120,86 @@ function buildPeople(records) {
 }
 
 function refreshPeople() {
-  state.people = buildPeople([...state.baseRecords, ...state.importedRecords]);
+  state.people = buildPeople([...state.baseRecords, ...state.savedRecords, ...state.importedRecords]);
 }
 
 function updateStatus() {
   const status = document.getElementById("status");
   if (!status) return;
   const baseCount = state.baseRecords.length;
+  const savedCount = state.savedRecords.length;
   const importedCount = state.importedRecords.length;
   const parts = [
     `Indice caricato: ${baseCount} righe`,
     `${state.people.length} profili`
   ];
+  if (savedCount) {
+    parts.push(`lista locale: ${savedCount} righe salvate`);
+  }
   if (importedCount) {
     parts.push(`file aggiunti: ${importedCount} righe da ${state.importedFiles.length} file`);
   }
   status.textContent = `${parts.join(", ")}.`;
+}
+
+function sanitizeRecord(record) {
+  return {
+    sheet: String(record.sheet || "file salvato"),
+    row: Number(record.row || 0) || "",
+    prop: String(record.prop || ""),
+    cf: String(record.cf || ""),
+    telefono: String(record.telefono || ""),
+    email: String(record.email || ""),
+    ind: String(record.ind || "")
+  };
+}
+
+function recordSignature(record) {
+  const name = normalizeText(record.prop);
+  const cf = splitValues(record.cf).map(normalizeCf).filter(Boolean).join("/");
+  const phones = splitValues(record.telefono).map(normalizePhone).filter(Boolean).join("/");
+  const emails = splitValues(record.email).map(value => String(value || "").toLowerCase()).filter(Boolean).join("/");
+  const address = normalizeText(record.ind);
+  return [cf, name, phones, emails, address].filter(Boolean).join("|");
+}
+
+function loadSavedRecords() {
+  try {
+    const raw = window.localStorage?.getItem(SAVED_RECORDS_KEY);
+    const records = raw ? JSON.parse(raw) : [];
+    return Array.isArray(records) ? records.map(sanitizeRecord).filter(recordSignature) : [];
+  } catch {
+    return [];
+  }
+}
+
+function persistSavedRecords() {
+  try {
+    window.localStorage?.setItem(SAVED_RECORDS_KEY, JSON.stringify(state.savedRecords));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function saveNewRecords(records) {
+  const seen = new Set([...state.baseRecords, ...state.savedRecords].map(recordSignature).filter(Boolean));
+  const additions = [];
+  for (const record of records) {
+    const clean = sanitizeRecord(record);
+    const signature = recordSignature(clean);
+    if (!signature || seen.has(signature)) continue;
+    seen.add(signature);
+    additions.push(clean);
+  }
+  if (!additions.length) return 0;
+  const previous = state.savedRecords;
+  state.savedRecords = [...state.savedRecords, ...additions];
+  if (!persistSavedRecords()) {
+    state.savedRecords = previous;
+    return 0;
+  }
+  return additions.length;
 }
 
 function queryFromForm() {
@@ -166,7 +233,7 @@ function contactMatches(person, query) {
   return Boolean(phoneOk || mailOk);
 }
 
-function searchPeople(query) {
+function searchPeople(query, people = state.people) {
   const phases = [];
   if (normalizeText(`${query.nome} ${query.cognome}`)) phases.push({ label: "Nome e Cognome", test: person => nameMatches(person, query) });
   if (normalizeCf(query.cf)) phases.push({ label: "Codice Fiscale", test: person => cfMatches(person, query) });
@@ -176,7 +243,7 @@ function searchPeople(query) {
 
   const found = new Map();
   for (const phase of phases) {
-    for (const person of state.people) {
+    for (const person of people) {
       if (!phase.test(person)) continue;
       if (!found.has(person.key)) found.set(person.key, { person, phases: new Set() });
       found.get(person.key).phases.add(phase.label);
@@ -379,8 +446,14 @@ async function parseUploadedFile(file) {
 function renderUploadStatus() {
   const target = document.getElementById("uploadStatus");
   const clear = document.getElementById("clearUploads");
+  const searchUploads = document.getElementById("searchUploads");
+  const hasImports = state.importedRecords.length > 0;
   if (!target || !clear) return;
-  clear.disabled = state.importedRecords.length === 0;
+  clear.disabled = !hasImports;
+  if (searchUploads) {
+    searchUploads.hidden = !hasImports;
+    searchUploads.disabled = !hasImports;
+  }
   if (!state.importedFiles.length) {
     target.innerHTML = `<span>Nessun file caricato.</span>`;
     return;
@@ -388,6 +461,7 @@ function renderUploadStatus() {
   target.innerHTML = `
     <strong>${state.importedFiles.length} file caricati</strong>
     <span>${state.importedRecords.length} righe analizzabili aggiunte all'indice.</span>
+    <span>${state.lastSavedCount} nuove righe salvate nella lista locale.</span>
     <small>${state.importedFiles.map(file => `${escapeHtml(file.name)} (${file.count})`).join(" · ")}</small>
   `;
 }
@@ -404,6 +478,7 @@ async function handleFileUpload(event) {
     const parsed = await Promise.all(files.map(parseUploadedFile));
     state.importedRecords = parsed.flatMap(item => item.records);
     state.importedFiles = parsed.map(item => ({ name: item.name, count: item.records.length }));
+    state.lastSavedCount = saveNewRecords(state.importedRecords);
     refreshPeople();
     renderUploadStatus();
     updateStatus();
@@ -420,11 +495,22 @@ async function handleFileUpload(event) {
 function clearUploads() {
   state.importedRecords = [];
   state.importedFiles = [];
+  state.lastSavedCount = 0;
   refreshPeople();
   renderUploadStatus();
   updateStatus();
   const query = queryFromForm();
   renderResults(hasActiveQuery(query) ? searchPeople(query) : []);
+}
+
+function runCurrentSearch() {
+  renderResults(searchPeople(queryFromForm()));
+}
+
+function runUploadedFileSearch() {
+  const query = queryFromForm();
+  if (!state.importedRecords.length) return;
+  renderResults(searchPeople(query, buildPeople(state.importedRecords)));
 }
 
 function rowFromPerson(person) {
@@ -508,7 +594,7 @@ function escapeHtml(value) {
 function bindEvents() {
   document.getElementById("searchForm").addEventListener("submit", event => {
     event.preventDefault();
-    renderResults(searchPeople(queryFromForm()));
+    runCurrentSearch();
   });
   document.getElementById("clear").addEventListener("click", () => {
     document.getElementById("searchForm").reset();
@@ -516,6 +602,7 @@ function bindEvents() {
   });
   document.getElementById("downloadCsv").addEventListener("click", downloadCsv);
   document.getElementById("fileInput").addEventListener("change", handleFileUpload);
+  document.getElementById("searchUploads").addEventListener("click", runUploadedFileSearch);
   document.getElementById("clearUploads").addEventListener("click", clearUploads);
 }
 
@@ -545,9 +632,10 @@ function renderShell() {
         <section class="upload-box" aria-label="File da analizzare">
           <div>
             <h2>File da analizzare</h2>
-            <p>Carica XLSX, CSV, JSON o TXT: i dati vengono aggiunti temporaneamente alla ricerca Nome, CF, Numero e Mail.</p>
+            <p>Carica XLSX, CSV, JSON o TXT: i dati nuovi vengono salvati nella lista locale e aggiunti alla ricerca Nome, CF, Numero e Mail.</p>
           </div>
           <div class="upload-actions">
+            <button id="searchUploads" type="button" class="upload-search" hidden>Cerca</button>
             <label id="fileInputLabel" class="file-button" for="fileInput">Carica file</label>
             <input id="fileInput" type="file" multiple accept=".xlsx,.xls,.csv,.json,.txt,text/csv,application/json,text/plain,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
             <button id="clearUploads" type="button" class="secondary" disabled>Rimuovi file</button>
@@ -568,6 +656,7 @@ async function init() {
   if (!response.ok) throw new Error("Indice contatti non leggibile.");
   state.payload = await response.json();
   state.baseRecords = state.payload.records || [];
+  state.savedRecords = loadSavedRecords();
   refreshPeople();
   state.loaded = true;
   renderUploadStatus();

@@ -175,6 +175,10 @@ button:disabled {
   pointer-events: none;
 }
 
+.upload-search {
+  min-height: 48px;
+}
+
 .file-button {
   display: inline-flex;
   align-items: center;
