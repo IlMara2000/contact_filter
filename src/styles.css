@@ -128,9 +128,93 @@ button.secondary {
   border: 1px solid #3a4f70;
 }
 
+button.secondary:disabled {
+  background: #1a2537;
+}
+
 button:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+.upload-box {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: start;
+  margin-top: 18px;
+  padding: 14px;
+  border: 1px dashed #34506f;
+  border-radius: 8px;
+  background: #0b1425;
+}
+
+.upload-box h2 {
+  margin: 0 0 5px;
+  font-size: 16px;
+}
+
+.upload-box p {
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.upload-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.upload-actions input[type="file"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.file-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 41px;
+  border-radius: 7px;
+  padding: 11px 16px;
+  background: var(--accent-2);
+  color: #03111d;
+  font-size: 13px;
+  font-weight: 900;
+  text-transform: none;
+  cursor: pointer;
+}
+
+.file-button[aria-busy="true"] {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.upload-status {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 3px;
+  min-height: 24px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.upload-status strong {
+  color: var(--accent);
+}
+
+.upload-status small {
+  color: #7f91aa;
+}
+
+.upload-status .error {
+  color: var(--danger);
+  font-weight: 800;
 }
 
 .status {
@@ -180,6 +264,8 @@ td {
 @media (max-width: 900px) {
   .grid { grid-template-columns: 1fr 1fr; }
   .topbar { flex-direction: column; }
+  .upload-box { grid-template-columns: 1fr; }
+  .upload-actions { justify-content: flex-start; }
 }
 
 @media (max-width: 560px) {

@@ -4,9 +4,14 @@ const DATA_URL = "/data/contact_excel_index.json";
 const state = {
   loaded: false,
   payload: null,
+  baseRecords: [],
+  importedRecords: [],
+  importedFiles: [],
   people: [],
   results: []
 };
+
+let xlsxLoader = null;
 
 const app = document.getElementById("app");
 
@@ -39,6 +44,15 @@ function splitValues(value) {
 
 function unique(values) {
   return Array.from(new Set(values.filter(Boolean)));
+}
+
+function hasActiveQuery(query) {
+  return Boolean(
+    normalizeText(`${query.nome} ${query.cognome}`) ||
+    normalizeCf(query.cf) ||
+    normalizePhone(query.numero) ||
+    String(query.mail || "").trim()
+  );
 }
 
 function splitName(fullName) {
@@ -102,6 +116,25 @@ function buildPeople(records) {
   }));
 }
 
+function refreshPeople() {
+  state.people = buildPeople([...state.baseRecords, ...state.importedRecords]);
+}
+
+function updateStatus() {
+  const status = document.getElementById("status");
+  if (!status) return;
+  const baseCount = state.baseRecords.length;
+  const importedCount = state.importedRecords.length;
+  const parts = [
+    `Indice caricato: ${baseCount} righe`,
+    `${state.people.length} profili`
+  ];
+  if (importedCount) {
+    parts.push(`file aggiunti: ${importedCount} righe da ${state.importedFiles.length} file`);
+  }
+  status.textContent = `${parts.join(", ")}.`;
+}
+
 function queryFromForm() {
   return {
     nome: document.getElementById("nome")?.value || "",
@@ -153,6 +186,245 @@ function searchPeople(query) {
   return Array.from(found.values())
     .map(item => ({ ...item.person, phases: Array.from(item.phases) }))
     .sort((a, b) => b.phases.length - a.phases.length || String(a.nominativo).localeCompare(String(b.nominativo)));
+}
+
+const FIELD_ALIASES = {
+  prop: ["PROP", "NOMINATIVO", "NOME COGNOME", "NOME_COMPLETO", "INTESTATARIO", "PROPRIETARIO", "OWNER", "PERSONA"],
+  nome: ["NOME", "NAME", "FIRST NAME", "FIRST_NAME"],
+  cognome: ["COGNOME", "SURNAME", "LAST NAME", "LAST_NAME"],
+  cf: ["CF", "CODICE FISCALE", "CODICEFISCALE", "CODICE_FISCALE", "FISCAL CODE", "TAX CODE"],
+  telefono: ["TELEFONO", "TEL", "NUMERO", "NUMERO TROVATO", "CELL", "CELLULARE", "PHONE", "MOBILE", "FISSO"],
+  email: ["EMAIL", "E-MAIL", "MAIL", "MAIL TROVATA"],
+  ind: ["IND", "INDIRIZZO", "INDIRIZZO D'ORIGINE", "INDIRIZZO ORIGINE", "ADDRESS", "VIA"]
+};
+
+function normalizedKey(value) {
+  return normalizeText(value).replace(/\s+/g, " ");
+}
+
+function pickField(row, aliases) {
+  if (!row || typeof row !== "object") return "";
+  const entries = Object.entries(row);
+  const aliasSet = new Set(aliases.map(normalizedKey));
+  const exact = entries.find(([key]) => aliasSet.has(normalizedKey(key)));
+  if (exact) return exact[1];
+  const fuzzy = entries.find(([key]) => {
+    const norm = normalizedKey(key);
+    return aliases.some(alias => norm.includes(normalizedKey(alias)));
+  });
+  return fuzzy ? fuzzy[1] : "";
+}
+
+function extractEmails(text) {
+  return unique(String(text || "").match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || []);
+}
+
+function extractCfs(text) {
+  return unique(String(text || "").toUpperCase().match(/[A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z]/g) || []);
+}
+
+function extractPhones(text) {
+  const raw = String(text || "").match(/(?:\+39\s*)?(?:3\d[\d\s./-]{7,}|0\d[\d\s./-]{5,})/g) || [];
+  return unique(raw.map(normalizePhone).filter(value => value.length >= 7));
+}
+
+function parseTextLine(line, index = 0, source = "file") {
+  const raw = String(line || "").replace(/\s+/g, " ").trim();
+  if (!raw) return null;
+  const cfs = extractCfs(raw);
+  const emails = extractEmails(raw);
+  const phones = extractPhones(raw);
+  let prop = raw
+    .replace(/[A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z]/gi, " ")
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, " ");
+  phones.forEach(phone => {
+    const spaced = phone.split("").join("[\\s./-]*");
+    prop = prop.replace(new RegExp(spaced, "g"), " ");
+  });
+  prop = prop
+    .split(/\s+-\s+|\s+F\s+\d+|\s+FOGLIO\s+\d+/i)[0]
+    .replace(/\b(?:TEL|TELEFONO|CELL|CELLULARE|MAIL|EMAIL|CF)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!prop && !cfs.length && !phones.length && !emails.length) return null;
+  return {
+    sheet: source,
+    row: index + 1,
+    prop,
+    cf: cfs.join(" / "),
+    telefono: phones.join(" / "),
+    email: emails.join(" / "),
+    ind: raw
+  };
+}
+
+function normalizeImportedRecord(row, index = 0, source = "file") {
+  if (typeof row === "string") return parseTextLine(row, index, source);
+  if (!row || typeof row !== "object") return null;
+
+  const rowText = Object.values(row).join(" ");
+  const nome = String(pickField(row, FIELD_ALIASES.nome) || "").trim();
+  const cognome = String(pickField(row, FIELD_ALIASES.cognome) || "").trim();
+  const prop = String(pickField(row, FIELD_ALIASES.prop) || [cognome, nome].filter(Boolean).join(" ") || "").trim();
+  const cf = String(pickField(row, FIELD_ALIASES.cf) || extractCfs(rowText).join(" / ")).trim();
+  const telefono = String(pickField(row, FIELD_ALIASES.telefono) || extractPhones(rowText).join(" / ")).trim();
+  const email = String(pickField(row, FIELD_ALIASES.email) || extractEmails(rowText).join(" / ")).trim();
+  const ind = String(pickField(row, FIELD_ALIASES.ind) || "").trim();
+
+  if (!prop && !cf && !telefono && !email) return parseTextLine(rowText, index, source);
+  return {
+    sheet: source,
+    row: index + 1,
+    prop,
+    cf,
+    telefono,
+    email,
+    ind: ind || rowText
+  };
+}
+
+function parseCsv(text) {
+  const lines = String(text || "").replace(/^\uFEFF/, "").split(/\r?\n/).filter(line => line.trim());
+  if (!lines.length) return [];
+  const sample = lines.slice(0, 5).join("\n");
+  const delimiter = [";", "\t", ","].sort((a, b) => sample.split(b).length - sample.split(a).length)[0];
+  const rows = lines.map(line => {
+    const cols = [];
+    let current = "";
+    let quoted = false;
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      const next = line[i + 1];
+      if (char === '"' && quoted && next === '"') {
+        current += '"';
+        i++;
+      } else if (char === '"') {
+        quoted = !quoted;
+      } else if (char === delimiter && !quoted) {
+        cols.push(current.trim());
+        current = "";
+      } else {
+        current += char;
+      }
+    }
+    cols.push(current.trim());
+    return cols;
+  });
+  const headers = rows[0].map(header => header.trim());
+  return rows.slice(1).map(cols => {
+    const row = {};
+    headers.forEach((header, index) => {
+      row[header || `COL_${index + 1}`] = cols[index] || "";
+    });
+    return row;
+  });
+}
+
+function collectJsonRows(value) {
+  if (Array.isArray(value)) return value;
+  if (!value || typeof value !== "object") return [];
+  for (const key of ["records", "rows", "data", "items", "people", "contatti"]) {
+    if (Array.isArray(value[key])) return value[key];
+  }
+  if (value.snapshot?.datasets && typeof value.snapshot.datasets === "object") {
+    return Object.values(value.snapshot.datasets).flatMap(dataset => Array.isArray(dataset) ? dataset : []);
+  }
+  return Object.values(value).flatMap(item => Array.isArray(item) ? item : []);
+}
+
+function loadXlsxParser() {
+  if (globalThis.XLSX) return Promise.resolve(globalThis.XLSX);
+  if (!xlsxLoader) {
+    xlsxLoader = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "/vendor/xlsx.full.min.js";
+      script.onload = () => globalThis.XLSX ? resolve(globalThis.XLSX) : reject(new Error("Parser XLSX non disponibile."));
+      script.onerror = () => reject(new Error("Parser XLSX non caricabile."));
+      document.head.appendChild(script);
+    });
+  }
+  return xlsxLoader;
+}
+
+async function parseUploadedFile(file) {
+  const name = file.name || "file";
+  const ext = name.split(".").pop().toLowerCase();
+  let rows = [];
+  if (ext === "xlsx" || ext === "xls") {
+    const XLSX = await loadXlsxParser();
+    const workbook = XLSX.read(await file.arrayBuffer(), { type: "array" });
+    rows = workbook.SheetNames.flatMap(sheetName => {
+      const sheet = workbook.Sheets[sheetName];
+      return XLSX.utils.sheet_to_json(sheet, { defval: "", raw: false })
+        .map((row, index) => ({ ...row, __sheet: sheetName, __row: index + 2 }));
+    });
+  } else {
+    const text = await file.text();
+    if (ext === "json") {
+      rows = collectJsonRows(JSON.parse(text));
+    } else if (ext === "csv") {
+      rows = parseCsv(text);
+    } else {
+      rows = text.split(/\r?\n/).filter(line => line.trim());
+    }
+  }
+
+  const records = rows
+    .map((row, index) => normalizeImportedRecord(row, row.__row || index, row.__sheet || name))
+    .filter(Boolean);
+  return { name, records };
+}
+
+function renderUploadStatus() {
+  const target = document.getElementById("uploadStatus");
+  const clear = document.getElementById("clearUploads");
+  if (!target || !clear) return;
+  clear.disabled = state.importedRecords.length === 0;
+  if (!state.importedFiles.length) {
+    target.innerHTML = `<span>Nessun file caricato.</span>`;
+    return;
+  }
+  target.innerHTML = `
+    <strong>${state.importedFiles.length} file caricati</strong>
+    <span>${state.importedRecords.length} righe analizzabili aggiunte all'indice.</span>
+    <small>${state.importedFiles.map(file => `${escapeHtml(file.name)} (${file.count})`).join(" · ")}</small>
+  `;
+}
+
+async function handleFileUpload(event) {
+  const input = event.currentTarget;
+  const files = Array.from(input.files || []);
+  if (!files.length) return;
+  const status = document.getElementById("uploadStatus");
+  const button = document.getElementById("fileInputLabel");
+  if (status) status.innerHTML = `<span>Analisi file in corso...</span>`;
+  if (button) button.setAttribute("aria-busy", "true");
+  try {
+    const parsed = await Promise.all(files.map(parseUploadedFile));
+    state.importedRecords = parsed.flatMap(item => item.records);
+    state.importedFiles = parsed.map(item => ({ name: item.name, count: item.records.length }));
+    refreshPeople();
+    renderUploadStatus();
+    updateStatus();
+    const query = queryFromForm();
+    if (hasActiveQuery(query)) renderResults(searchPeople(query));
+  } catch (error) {
+    if (status) status.innerHTML = `<span class="error">Errore file: ${escapeHtml(error.message)}</span>`;
+  } finally {
+    if (button) button.removeAttribute("aria-busy");
+    input.value = "";
+  }
+}
+
+function clearUploads() {
+  state.importedRecords = [];
+  state.importedFiles = [];
+  refreshPeople();
+  renderUploadStatus();
+  updateStatus();
+  const query = queryFromForm();
+  renderResults(hasActiveQuery(query) ? searchPeople(query) : []);
 }
 
 function rowFromPerson(person) {
@@ -243,6 +515,8 @@ function bindEvents() {
     renderResults([]);
   });
   document.getElementById("downloadCsv").addEventListener("click", downloadCsv);
+  document.getElementById("fileInput").addEventListener("change", handleFileUpload);
+  document.getElementById("clearUploads").addEventListener("click", clearUploads);
 }
 
 function renderShell() {
@@ -268,6 +542,18 @@ function renderShell() {
             <button id="downloadCsv" type="button" class="secondary" disabled>Download CSV</button>
           </div>
         </form>
+        <section class="upload-box" aria-label="File da analizzare">
+          <div>
+            <h2>File da analizzare</h2>
+            <p>Carica XLSX, CSV, JSON o TXT: i dati vengono aggiunti temporaneamente alla ricerca Nome, CF, Numero e Mail.</p>
+          </div>
+          <div class="upload-actions">
+            <label id="fileInputLabel" class="file-button" for="fileInput">Carica file</label>
+            <input id="fileInput" type="file" multiple accept=".xlsx,.xls,.csv,.json,.txt,text/csv,application/json,text/plain,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+            <button id="clearUploads" type="button" class="secondary" disabled>Rimuovi file</button>
+          </div>
+          <div id="uploadStatus" class="upload-status"><span>Nessun file caricato.</span></div>
+        </section>
         <div class="status" id="status">Caricamento indice...</div>
         <div id="results" class="results"><div class="empty">Inserisci almeno un dato e premi Cerca.</div></div>
       </section>
@@ -281,9 +567,11 @@ async function init() {
   const response = await fetch(DATA_URL);
   if (!response.ok) throw new Error("Indice contatti non leggibile.");
   state.payload = await response.json();
-  state.people = buildPeople(state.payload.records || []);
+  state.baseRecords = state.payload.records || [];
+  refreshPeople();
   state.loaded = true;
-  document.getElementById("status").textContent = `Indice caricato: ${state.payload.records?.length || 0} righe, ${state.people.length} profili.`;
+  renderUploadStatus();
+  updateStatus();
 }
 
 init().catch(error => {
