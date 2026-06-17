@@ -215,7 +215,16 @@ function queryFromForm() {
 function nameMatches(person, query) {
   const tokens = normalizeText(`${query.nome} ${query.cognome}`).split(/\s+/).filter(Boolean);
   if (!tokens.length) return false;
-  const target = normalizeText([person.nominativo, person.nome, person.cognome].join(" "));
+  const evidenceText = (person.evidence || [])
+    .map(record => [record.prop, record.ind, record.sheet].filter(Boolean).join(" "))
+    .join(" ");
+  const target = normalizeText([
+    person.nominativo,
+    person.nome,
+    person.cognome,
+    ...(person.addresses || []),
+    evidenceText
+  ].join(" "));
   return tokens.every(token => target.includes(token));
 }
 
@@ -228,7 +237,11 @@ function cfMatches(person, query) {
 function contactMatches(person, query) {
   const phone = normalizePhone(query.numero);
   const mail = String(query.mail || "").trim().toLowerCase();
-  const phoneOk = phone && person.phones.some(value => value === phone);
+  const phoneOk = phone && phone.length >= 3 && person.phones.some(value =>
+    value === phone ||
+    (phone.length >= 4 && value.includes(phone)) ||
+    (value.length >= 4 && phone.includes(value))
+  );
   const mailOk = mail && person.emails.some(value => value.includes(mail));
   return Boolean(phoneOk || mailOk);
 }
@@ -509,8 +522,15 @@ function runCurrentSearch() {
 
 function runUploadedFileSearch() {
   const query = queryFromForm();
-  if (!state.importedRecords.length) return;
-  renderResults(searchPeople(query, buildPeople(state.importedRecords)));
+  const records = state.importedRecords.length
+    ? state.importedRecords
+    : state.savedRecords;
+  if (!records.length) return;
+  if (!hasActiveQuery(query)) {
+    renderResults(buildPeople(records).map(person => ({ ...person, phases: ["File caricato"] })));
+    return;
+  }
+  renderResults(searchPeople(query, buildPeople(records)));
 }
 
 function rowFromPerson(person) {
