@@ -11,7 +11,8 @@ const state = {
   importedFiles: [],
   lastSavedCount: 0,
   people: [],
-  results: []
+  results: [],
+  activeMode: "name"
 };
 
 let xlsxLoader = null;
@@ -203,13 +204,18 @@ function saveNewRecords(records) {
 }
 
 function queryFromForm() {
-  return {
+  const query = {
     nome: document.getElementById("nome")?.value || "",
     cognome: document.getElementById("cognome")?.value || "",
     cf: document.getElementById("cf")?.value || "",
     numero: document.getElementById("numero")?.value || "",
     mail: document.getElementById("mail")?.value || ""
   };
+  if (state.activeMode === "name") return { ...query, cf: "", numero: "", mail: "" };
+  if (state.activeMode === "number") {
+    return { nome: "", cognome: "", cf: "", numero: query.numero, mail: "" };
+  }
+  return query;
 }
 
 function nameMatches(person, query) {
@@ -459,14 +465,12 @@ async function parseUploadedFile(file) {
 function renderUploadStatus() {
   const target = document.getElementById("uploadStatus");
   const clear = document.getElementById("clearUploads");
-  const searchUploads = document.getElementById("searchUploads");
+  const searchButtons = [document.getElementById("searchUploads")].filter(Boolean);
   const hasImports = state.importedRecords.length > 0;
+  const hasFileData = hasImports || state.savedRecords.length > 0;
   if (!target || !clear) return;
   clear.disabled = !hasImports;
-  if (searchUploads) {
-    searchUploads.hidden = !hasImports;
-    searchUploads.disabled = !hasImports;
-  }
+  searchButtons.forEach(button => { button.disabled = !hasFileData; });
   if (!state.importedFiles.length) {
     target.innerHTML = `<span>Nessun file caricato.</span>`;
     return;
@@ -521,16 +525,47 @@ function runCurrentSearch() {
 }
 
 function runUploadedFileSearch() {
-  const query = queryFromForm();
   const records = state.importedRecords.length
     ? state.importedRecords
     : state.savedRecords;
   if (!records.length) return;
-  if (!hasActiveQuery(query)) {
-    renderResults(buildPeople(records).map(person => ({ ...person, phases: ["File caricato"] })));
-    return;
+  renderResults(buildPeople(records).map(person => ({ ...person, phases: ["File caricato"] })));
+}
+
+function setActiveMode(mode) {
+  state.activeMode = mode;
+  document.querySelectorAll("[data-mode]").forEach(button => {
+    const selected = button.dataset.mode === mode;
+    button.classList.toggle("active", selected);
+    button.setAttribute("aria-pressed", selected ? "true" : "false");
+  });
+
+  const searchPanel = document.getElementById("searchForm");
+  const filePanel = document.getElementById("filePanel");
+  if (searchPanel) searchPanel.hidden = mode === "file";
+  if (filePanel) filePanel.hidden = mode !== "file";
+
+  document.querySelectorAll("[data-field]").forEach(field => {
+    const modes = String(field.dataset.field || "").split(/\s+/);
+    field.hidden = !modes.includes(mode);
+  });
+
+  const panelTitle = document.getElementById("panelTitle");
+  const searchButton = document.getElementById("runModeSearch");
+  const titles = {
+    name: "Ricerca per nome",
+    number: "Ricerca per numero",
+    generic: "Ricerca generica"
+  };
+  if (panelTitle) panelTitle.textContent = titles[mode] || "";
+  if (searchButton) {
+    searchButton.textContent = mode === "name"
+      ? "CERCA NOMINATIVO"
+      : mode === "number"
+        ? "CERCA NUMERO"
+        : "AVVIA RICERCA";
   }
-  renderResults(searchPeople(query, buildPeople(records)));
+  renderResults([]);
 }
 
 function rowFromPerson(person) {
@@ -570,7 +605,7 @@ function renderResults(results) {
   state.results = results;
   if (!target) return;
   if (!results.length) {
-    target.innerHTML = `<div class="empty">Nessun risultato trovato con i tre canali impostati.</div>`;
+    target.innerHTML = `<div class="empty">Nessun risultato da mostrare.</div>`;
     document.getElementById("downloadCsv").disabled = true;
     document.getElementById("count").textContent = "0";
     return;
@@ -578,32 +613,26 @@ function renderResults(results) {
 
   document.getElementById("downloadCsv").disabled = false;
   document.getElementById("count").textContent = String(results.length);
-  const rows = results.map(rowFromPerson);
+  const maxVisible = 250;
+  const rows = results.slice(0, maxVisible).map(rowFromPerson);
+  const truncated = results.length > maxVisible;
   target.innerHTML = `
-    <table>
-      <thead>
-        <tr>
-          <th>NOME</th>
-          <th>COGNOME</th>
-          <th>CF</th>
-          <th>NUMERO TROVATO</th>
-          <th>MAIL TROVATA</th>
-          <th>INDIRIZZO D'ORIGINE</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${rows.map(row => `
-          <tr>
-            <td>${escapeHtml(row.nome)}</td>
-            <td>${escapeHtml(row.cognome)}</td>
-            <td>${escapeHtml(row.cf)}</td>
-            <td>${escapeHtml(row.numero)}</td>
-            <td>${escapeHtml(row.mail)}</td>
-            <td>${escapeHtml(row.indirizzo)}</td>
-          </tr>
-        `).join("")}
-      </tbody>
-    </table>
+    <div class="result-head" aria-hidden="true">
+      <span>NOME</span><span>COGNOME</span><span>CF</span><span>NUMERO</span><span>MAIL</span><span>INDIRIZZO</span>
+    </div>
+    <div class="result-list">
+      ${rows.map(row => `
+        <article class="result-row">
+          <span data-label="Nome">${escapeHtml(row.nome)}</span>
+          <span data-label="Cognome">${escapeHtml(row.cognome)}</span>
+          <span data-label="CF">${escapeHtml(row.cf)}</span>
+          <span data-label="Numero">${escapeHtml(row.numero)}</span>
+          <span data-label="Mail">${escapeHtml(row.mail)}</span>
+          <span data-label="Indirizzo">${escapeHtml(row.indirizzo)}</span>
+        </article>
+      `).join("")}
+    </div>
+    ${truncated ? `<div class="result-limit">Mostrati i primi ${maxVisible} risultati. Il CSV contiene tutti i ${results.length} risultati.</div>` : ""}
   `;
 }
 
@@ -615,6 +644,9 @@ function bindEvents() {
   document.getElementById("searchForm").addEventListener("submit", event => {
     event.preventDefault();
     runCurrentSearch();
+  });
+  document.querySelectorAll("[data-mode]").forEach(button => {
+    button.addEventListener("click", () => setActiveMode(button.dataset.mode));
   });
   document.getElementById("clear").addEventListener("click", () => {
     document.getElementById("searchForm").reset();
@@ -629,41 +661,62 @@ function bindEvents() {
 function renderShell() {
   app.innerHTML = `
     <main class="shell">
-      <section class="panel">
-        <header class="topbar">
-          <div>
-            <h1>CYBORG Filter</h1>
-            <p>Ricerca contatti su JSON indicizzato: Nome e Cognome, Codice Fiscale, Numero / Mail.</p>
-          </div>
-          <div class="metric"><span id="count">0</span><small>risultati</small></div>
+      <section class="app-frame">
+        <header class="app-header">
+          <h1>CYBORG FILTER</h1>
+          <p>Ricerca contatti rapida e verificata</p>
         </header>
-        <form id="searchForm" class="grid">
-          <label>Nome<input id="nome" autocomplete="off" placeholder="Mario"></label>
-          <label>Cognome<input id="cognome" autocomplete="off" placeholder="Rossi"></label>
-          <label>Codice fiscale<input id="cf" autocomplete="off" placeholder="RSSMRA..."></label>
-          <label>Numero<input id="numero" autocomplete="off" inputmode="tel" placeholder="333..."></label>
-          <label>Mail<input id="mail" autocomplete="off" inputmode="email" placeholder="nome@mail.it"></label>
-          <div class="actions">
-            <button type="submit">Cerca</button>
-            <button id="clear" type="button" class="secondary">Pulisci</button>
-            <button id="downloadCsv" type="button" class="secondary" disabled>Download CSV</button>
+
+        <nav class="mode-stack" aria-label="Modalita di ricerca">
+          <button type="button" class="mode-button active" data-mode="name" aria-pressed="true">CERCA PER NOME</button>
+          <button type="button" class="mode-button" data-mode="number" aria-pressed="false">CERCA PER NUMERO</button>
+          <button type="button" class="mode-button" data-mode="generic" aria-pressed="false">RICERCA GENERICA</button>
+          <button type="button" class="mode-button file-mode" data-mode="file" aria-pressed="false">INSERISCI FILE</button>
+        </nav>
+
+        <section class="workspace">
+          <form id="searchForm" class="search-panel">
+            <div class="panel-heading">
+              <h2 id="panelTitle">Ricerca per nome</h2>
+            </div>
+            <div class="field-grid">
+              <label data-field="name generic">Nome<input id="nome" autocomplete="off" placeholder="Mario"></label>
+              <label data-field="name generic">Cognome<input id="cognome" autocomplete="off" placeholder="Rossi"></label>
+              <label data-field="generic" hidden>Codice fiscale<input id="cf" autocomplete="off" placeholder="RSSMRA..."></label>
+              <label data-field="number generic" hidden>Numero<input id="numero" autocomplete="off" inputmode="tel" placeholder="333..."></label>
+              <label data-field="generic" hidden>Mail<input id="mail" autocomplete="off" inputmode="email" placeholder="nome@mail.it"></label>
+            </div>
+            <div class="search-actions">
+              <button id="runModeSearch" type="submit" class="primary-action">CERCA NOMINATIVO</button>
+              <button id="clear" type="button" class="secondary">PULISCI</button>
+            </div>
+          </form>
+
+          <section id="filePanel" class="file-panel" hidden>
+            <div class="panel-heading">
+              <h2>Inserisci file</h2>
+            </div>
+            <div class="file-primary-actions">
+              <label id="fileInputLabel" class="file-button" for="fileInput">UPLOAD</label>
+              <input id="fileInput" type="file" multiple accept=".xlsx,.xls,.csv,.json,.txt,text/csv,application/json,text/plain,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+              <button id="clearUploads" type="button" class="delete-button" disabled>DELETE</button>
+            </div>
+            <div id="uploadStatus" class="upload-status"><span>Nessun file caricato.</span></div>
+            <div class="file-search-actions">
+              <button id="searchUploads" type="button">CERCA</button>
+            </div>
+          </section>
+
+          <div class="result-toolbar">
+            <div>
+              <strong><span id="count">0</span> risultati</strong>
+              <div class="status" id="status">Caricamento indice...</div>
+            </div>
+            <button id="downloadCsv" type="button" class="secondary" disabled>DOWNLOAD CSV</button>
           </div>
-        </form>
-        <section class="upload-box" aria-label="File da analizzare">
-          <div>
-            <h2>File da analizzare</h2>
-            <p>Carica XLSX, CSV, JSON o TXT: i dati nuovi vengono salvati nella lista locale e aggiunti alla ricerca Nome, CF, Numero e Mail.</p>
-          </div>
-          <div class="upload-actions">
-            <button id="searchUploads" type="button" class="upload-search" hidden>Cerca</button>
-            <label id="fileInputLabel" class="file-button" for="fileInput">Carica file</label>
-            <input id="fileInput" type="file" multiple accept=".xlsx,.xls,.csv,.json,.txt,text/csv,application/json,text/plain,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
-            <button id="clearUploads" type="button" class="secondary" disabled>Rimuovi file</button>
-          </div>
-          <div id="uploadStatus" class="upload-status"><span>Nessun file caricato.</span></div>
+
+          <div id="results" class="results"><div class="empty">Inserisci un dato e avvia la ricerca.</div></div>
         </section>
-        <div class="status" id="status">Caricamento indice...</div>
-        <div id="results" class="results"><div class="empty">Inserisci almeno un dato e premi Cerca.</div></div>
       </section>
     </main>
   `;
